@@ -1,0 +1,14 @@
+# Local notes and backups
+data/
+*.bak
+*.tmp
+
+# Build output (distributed through Releases)
+HaruMemo.exe
+*.zip
+bin/
+obj/
+
+# Local verification artifacts
+*-test-result.txt
+.vs/
