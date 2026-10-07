@@ -387,7 +387,6 @@ namespace StickyTodo
             double value = Find<Slider>("TransparencySlider").Value;
             Window.Opacity = 1-value/100;
             Store.Data.Settings.Transparency = value;
-            Find<TextBlock>("TransparencyValue").Text = value.ToString("0",CultureInfo.InvariantCulture) + "%";
             if (ready) { geometryTimer.Stop(); geometryTimer.Start(); }
         }
         double Font(double size) { return size*Store.Data.Settings.FontSize/13; }
@@ -807,7 +806,7 @@ namespace StickyTodo
             var transparencySlider = Find<Slider>("TransparencySlider");
             Require(transparencySlider.IsVisible && Window.Opacity == 1,"접힌 화면의 투명도 슬라이더와 기본 불투명 상태");
             transparencySlider.Value = 80;
-            Require(Math.Abs(Window.Opacity-0.2)<0.001 && Store.Data.Settings.Transparency == 80 && Find<TextBlock>("TransparencyValue").Text == "80%","투명도 즉시 반영과 최댓값");
+            Require(Math.Abs(Window.Opacity-0.2)<0.001 && Store.Data.Settings.Transparency == 80,"투명도 즉시 반영과 최댓값");
             transparencySlider.Value = 0;
             Require(Window.Opacity == 1,"투명도 0%로 복원");
             transparencySlider.ApplyTemplate();
