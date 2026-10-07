@@ -7,6 +7,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows;
@@ -14,6 +15,7 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Markup;
 using System.Windows.Media;
@@ -157,6 +159,7 @@ namespace StickyTodo
     }
     public class NoteApp
     {
+        static readonly Regex webLinks = new Regex(@"(?<![\p{L}\p{N}_@])(?:https?://|www\.)[^\s<>""'，。！？]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         public Window Window;
         public readonly Store Store;
         readonly CultureInfo korean = CultureInfo.GetCultureInfo("ko-KR");
@@ -485,12 +488,11 @@ namespace StickyTodo
                 if (restoreFocus) { CheckBox next = renderedChecks.FirstOrDefault(c => (string)c.Tag == item.Id); if (next != null) next.Focus(); }
             };
             renderedChecks.Add(check); row.Children.Add(check);
-            var text = new TextBlock { Text = item.Text, TextWrapping = TextWrapping.Wrap, FontSize = 13, LineHeight = 22, VerticalAlignment = VerticalAlignment.Center, Foreground = Brush(item.Done ? "Muted" : "Ink") };
-            if (item.Done) text.TextDecorations = TextDecorations.Strikethrough;
+            var text = TaskText(item);
             var edit = new Button { Content = text, HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(3,10,3,10), ToolTip = "클릭하여 내용·날짜 수정" };
             text.HorizontalAlignment = HorizontalAlignment.Left;
             edit.HorizontalAlignment = HorizontalAlignment.Stretch;
-            edit.Click += delegate { Edit(item); };
+            edit.Click += delegate(object sender, RoutedEventArgs e) { if (!(e.OriginalSource is Hyperlink)) Edit(item); };
             AutomationProperties.SetName(edit, item.Text + " 수정");
             Grid.SetColumn(edit, 1); row.Children.Add(edit);
             var more = new Button { Content = "\uE712", Style = (Style)Window.FindResource("IconButton"), Width = 28, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0,5,0,0), ToolTip = "할 일 메뉴" };
@@ -503,6 +505,45 @@ namespace StickyTodo
             AutomationProperties.SetName(more, item.Text + " 메뉴");
             Grid.SetColumn(more, 2); row.Children.Add(more);
             return new Border { Child = row, BorderBrush = Brush("Rule"), BorderThickness = new Thickness(0,0,0,expanded ? 0.5 : 0) };
+        }
+        static string WebAddress(string value)
+        {
+            value = value.TrimEnd('.', ',', ';', '!', ':');
+            while (value.Length > 0)
+            {
+                int closing = ")]}".IndexOf(value[value.Length-1]);
+                if (closing < 0 || value.Count(c => c == ")]}"[closing]) <= value.Count(c => c == "([{"[closing])) break;
+                value = value.Substring(0,value.Length-1);
+            }
+            return value;
+        }
+        TextBlock TaskText(Todo item)
+        {
+            var text = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 13, LineHeight = 22, VerticalAlignment = VerticalAlignment.Center, Foreground = Brush(item.Done ? "Muted" : "Ink") };
+            if (item.Done) text.TextDecorations = TextDecorations.Strikethrough;
+            int position = 0;
+            foreach (Match match in webLinks.Matches(item.Text))
+            {
+                string address = WebAddress(match.Value);
+                Uri uri;
+                if (!Uri.TryCreate(address.StartsWith("www.",StringComparison.OrdinalIgnoreCase) ? "https://" + address : address, UriKind.Absolute, out uri) ||
+                    (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp) || String.IsNullOrEmpty(uri.Host)) continue;
+                text.Inlines.Add(new Run(item.Text.Substring(position,match.Index-position)));
+                var link = new Hyperlink(new Run(address)) { NavigateUri = uri, Foreground = item.Done ? Brush("Muted") : Hex("#365B7A"), Cursor = Cursors.Hand, ToolTip = "브라우저에서 열기\n" + uri.AbsoluteUri };
+                if (item.Done) link.TextDecorations = new TextDecorationCollection { TextDecorations.Underline[0], TextDecorations.Strikethrough[0] };
+                AutomationProperties.SetName(link,address + " · 브라우저에서 열기");
+                link.Click += delegate(object sender, RoutedEventArgs e) { e.Handled = true; };
+                link.RequestNavigate += delegate(object sender, System.Windows.Navigation.RequestNavigateEventArgs e)
+                {
+                    e.Handled = true;
+                    try { Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true }); }
+                    catch (Exception error) { MessageBox.Show(Window,"링크를 열지 못했습니다.\n" + error.Message,"하루 메모",MessageBoxButton.OK,MessageBoxImage.Information); }
+                };
+                text.Inlines.Add(link);
+                position = match.Index + address.Length;
+            }
+            text.Inlines.Add(new Run(item.Text.Substring(position)));
+            return text;
         }
         MenuItem MenuItem(string title, Action action)
         {
@@ -704,6 +745,25 @@ namespace StickyTodo
             Require(Find<StackPanel>("ExpandedTools").Visibility == Visibility.Collapsed && Find<StackPanel>("DayHeader").Visibility == Visibility.Collapsed && Find<Grid>("Footer").Visibility == Visibility.Collapsed, "기본 확장 UI 숨김");
             Capture(Path.Combine(dir,"compact-empty.png"));
             DateTime today = DateTime.Today;
+            var linkItem = new Todo { Id = "link-check", Date = Store.Key(today), Text = "자료 (https://example.com/a_(b)?q=1&next=2#part), www.example.org/path. 끝 https://예시.한국/문서" };
+            var linkRow = (Border)TaskRow(linkItem);
+            var linkEdit = ((Grid)linkRow.Child).Children.OfType<Button>().First();
+            var linkText = (TextBlock)linkEdit.Content;
+            var detectedLinks = linkText.Inlines.OfType<Hyperlink>().ToList();
+            Require(detectedLinks.Count == 3 && detectedLinks[0].NavigateUri.AbsoluteUri == "https://example.com/a_(b)?q=1&next=2#part" && detectedLinks[1].NavigateUri.AbsoluteUri == "https://www.example.org/path", "웹 주소 감지, 여러 링크, 문장 부호 제외");
+            Require(new TextRange(linkText.ContentStart,linkText.ContentEnd).Text == linkItem.Text, "링크 변환 시 원문 보존");
+            bool editClicked = false;
+            linkEdit.Click += delegate { editClicked = true; };
+            var linkClick = new RoutedEventArgs(Hyperlink.ClickEvent,detectedLinks[0]);
+            detectedLinks[0].RaiseEvent(linkClick);
+            Require(linkClick.Handled && !editClicked, "링크 클릭은 수정창을 열지 않음");
+            linkItem.Done = true;
+            Require(TaskText(linkItem).Inlines.OfType<Hyperlink>().All(l => l.TextDecorations.Count == 2), "완료한 링크도 취소선과 연결 유지");
+            Require(!TaskText(new Todo { Text = "javascript:alert(1) file:///C:/Windows/calc.exe 일반 메모" }).Inlines.OfType<Hyperlink>().Any(), "웹 주소만 링크로 처리");
+            Require(TaskText(new Todo { Text = "HTTP://example.com/ [https://example.com/a_(b)]" }).Inlines.OfType<Hyperlink>().Count() == 2, "HTTP와 대문자 주소 감지");
+            Find<StackPanel>("TaskList").Children.Clear(); Find<StackPanel>("TaskList").Children.Add(linkRow); FlushUi(Window.Dispatcher);
+            Require(detectedLinks.All(l => l.IsEnabled), "목록 링크 클릭 가능");
+            Capture(Path.Combine(dir,"links.png")); Render();
             Find<TextBox>("NewTask").Text = "화면과 저장 상태 확인하기";
             Find<Button>("AddButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Require(VisibleTasks().Count == 1, "추가 버튼");
@@ -850,7 +910,7 @@ namespace StickyTodo
             var reopened = new NoteApp(reloaded);
             Require(!reopened.expanded && Math.Abs(reopened.Window.Width-280)<2 && Math.Abs(reopened.Window.Height-240)<2 && reopened.Find<StackPanel>("ExpandedTools").Visibility == Visibility.Collapsed, "재실행은 항상 접힌 화면");
             reopened.Window.Close();
-            File.WriteAllText(Path.Combine(dir, "ui-test-result.txt"), "PASS: minimal default, expansion/collapse, native topmost/resize, custom calendar navigation/day selection, recorded-date colors and dots, completed-date marking, live add/move/delete/undo/color updates, styled task menu, delete/undo notice and timed expiry, edit text/date, history/filter/search, right-edge index tab and click restoration, duplicate-launch restoration, normal taskbar minimization, size/settings/data persistence.");
+            File.WriteAllText(Path.Combine(dir, "ui-test-result.txt"), "PASS: web link detection and click routing, text preservation, completed links, minimal default, expansion/collapse, native topmost/resize, custom calendar navigation/day selection, recorded-date colors and dots, completed-date marking, live add/move/delete/undo/color updates, styled task menu, delete/undo notice and timed expiry, edit text/date, history/filter/search, right-edge index tab and click restoration, duplicate-launch restoration, normal taskbar minimization, size/settings/data persistence.");
         }
         static void Require(bool value, string message) { if (!value) throw new Exception("확인 실패: " + message); }
     }
