@@ -174,6 +174,7 @@ namespace StickyTodo
         readonly DispatcherTimer dayTimer = new DispatcherTimer();
         readonly DispatcherTimer undoTimer = new DispatcherTimer();
         readonly List<CheckBox> renderedChecks = new List<CheckBox>();
+        readonly ResourceDictionary resources;
         Window indexWindow;
         Button indexButton;
         bool docked, shuttingDown;
@@ -184,6 +185,12 @@ namespace StickyTodo
             Store = store;
             using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("Main.xaml"))
                 Window = (Window)XamlReader.Load(stream);
+            // Application-level resources reach menus, dialogs and the index tab without assigning Window.Resources
+            // to every new element: that sharing leaked each per-row ContextMenu and slowed every later Render.
+            resources = Window.Resources;
+            foreach (object value in resources.Values) { var freezable = value as Freezable; if (freezable != null && freezable.CanFreeze) freezable.Freeze(); }
+            Window.Resources = new ResourceDictionary();
+            Application.Current.Resources = resources;
             var iconStream = Assembly.GetExecutingAssembly().GetManifestResourceStream("Note.ico");
             if (iconStream != null) using (iconStream) Window.Icon = BitmapFrame.Create(iconStream);
             Wire();
@@ -239,7 +246,7 @@ namespace StickyTodo
         }
         public T Find<T>(string name) where T : FrameworkElement { return (T)Window.FindName(name); }
         Brush Brush(string key) { return (Brush)Window.FindResource(key); }
-        static SolidColorBrush Hex(string value) { return new SolidColorBrush((Color)ColorConverter.ConvertFromString(value)); }
+        static SolidColorBrush Hex(string value) { var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(value)); brush.Freeze(); return brush; }
         void SetGeometry()
         {
             Settings s = Store.Data.Settings;
@@ -416,13 +423,14 @@ namespace StickyTodo
         {
             var paper = (SolidColorBrush)Brush("Paper").Clone();
             paper.Opacity = 1-Store.Data.Settings.Transparency/100;
-            Window.Resources["MemoPaper"] = paper;
+            paper.Freeze();
+            resources["MemoPaper"] = paper;
         }
         double Font(double size) { return size*Store.Data.Settings.FontSize/13; }
         void ApplyFontSize()
         {
             Store.Data.Settings.FontSize = Math.Max(10,Math.Min(18,Valid(Store.Data.Settings.FontSize,13)));
-            for (int size = 9; size <= 25; size++) Window.Resources["Font" + size] = Font(size);
+            for (int size = 9; size <= 25; size++) resources["Font" + size] = Font(size);
             Find<Button>("FontDecreaseButton").IsEnabled = Store.Data.Settings.FontSize > 10;
             Find<Button>("FontIncreaseButton").IsEnabled = Store.Data.Settings.FontSize < 18;
             Find<Button>("FontDecreaseButton").ToolTip = "글자 작게 · 현재 " + Store.Data.Settings.FontSize.ToString("0");
@@ -444,10 +452,10 @@ namespace StickyTodo
         {
             index = Math.Max(0, Math.Min(colors.Length - 1, index));
             Store.Data.Settings.Color = index;
-            Window.Resources["Paper"] = Hex(colors[index]);
+            resources["Paper"] = Hex(colors[index]);
             UpdatePaperTransparency();
-            Window.Resources["Hover"] = Hex(hoverColors[index]);
-            Window.Resources["Rule"] = Hex(ruleColors[index]);
+            resources["Hover"] = Hex(hoverColors[index]);
+            resources["Rule"] = Hex(ruleColors[index]);
             if (indexWindow != null) { ((Border)indexWindow.Content).Background = Brush("Paper"); ((Border)indexWindow.Content).BorderBrush = Brush("Rule"); }
             var palette = Find<StackPanel>("Palette"); palette.Children.Clear();
             for (int i = 0; i < colors.Length; i++)
@@ -479,7 +487,9 @@ namespace StickyTodo
         public void Render()
         {
             rendering = true;
-            Window.Resources["RecordedDates"] = new HashSet<string>(Store.Data.Tasks.Select(t => t.Date));
+            var dates = new HashSet<string>(Store.Data.Tasks.Select(t => t.Date));
+            var shown = resources["RecordedDates"] as HashSet<string>;
+            if (shown == null || !shown.SetEquals(dates)) resources["RecordedDates"] = dates;
             Find<DatePicker>("DayPicker").SelectedDate = selected;
             Find<TextBlock>("DateTitle").Text = selected.ToString("M월 d일 dddd", korean);
             Find<Button>("DayTab").Background = !history ? Brush("Hover") : Brushes.Transparent;
@@ -586,10 +596,11 @@ namespace StickyTodo
             var more = new Button { Content = "\uE712", Style = (Style)Window.FindResource("IconButton"), Width = 28, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0,5,0,0), ToolTip = "할 일 메뉴" };
             more.Click += delegate { ShowTaskMenu(item, more); };
             more.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
-            var menu = new ContextMenu { Resources = Window.Resources };
-            menu.Items.Add(MenuItem("내용·날짜 수정", delegate { Edit(item); }));
-            menu.Items.Add(MenuItem("삭제", delegate { Delete(item); }));
-            row.ContextMenu = menu;
+            row.ContextMenuOpening += delegate(object sender, ContextMenuEventArgs e)
+            {
+                e.Handled = true;
+                ShowTaskMenu(item, edit, e.CursorLeft >= 0 ? PlacementMode.MousePoint : PlacementMode.Bottom);
+            };
             AutomationProperties.SetName(more, item.Text + " 메뉴");
             Grid.SetColumn(more, 2); row.Children.Add(more);
             return new Border { Child = row, BorderBrush = Brush("Rule"), BorderThickness = new Thickness(0,0,0,expanded ? 0.5 : 0) };
@@ -630,16 +641,18 @@ namespace StickyTodo
                 text.Inlines.Add(link);
                 position = match.Index + address.Length;
             }
-            text.Inlines.Add(new Run(item.Text.Substring(position)));
+            // Plain Text for link-free tasks: TextBlocks built from Inlines stay reachable after each Render clears them.
+            if (position == 0) text.Text = item.Text;
+            else text.Inlines.Add(new Run(item.Text.Substring(position)));
             return text;
         }
         MenuItem MenuItem(string title, Action action)
         {
             var item = new MenuItem { Header = title, Tag = title == "삭제" ? "delete" : "", Style = (Style)Window.FindResource(typeof(MenuItem)) }; item.Click += delegate { action(); }; return item;
         }
-        ContextMenu ShowTaskMenu(Todo item, Button owner)
+        ContextMenu ShowTaskMenu(Todo item, Button owner, PlacementMode placement = PlacementMode.Bottom)
         {
-            var menu = new ContextMenu { Resources = Window.Resources, PlacementTarget = owner, Placement = PlacementMode.Bottom };
+            var menu = new ContextMenu { PlacementTarget = owner, Placement = placement };
             menu.Items.Add(MenuItem("내용·날짜 수정", delegate { Edit(item); }));
             menu.Items.Add(MenuItem(item.Done ? "완료 취소" : "완료로 표시", delegate { item.Done = !item.Done; item.CompletedAt = item.Done ? DateTimeOffset.Now.ToString("o") : null; Persist(); Render(); }));
             menu.Items.Add(new Separator());
@@ -675,7 +688,7 @@ namespace StickyTodo
             if (indexWindow == null)
             {
                 indexWindow = new Window { Title = "하루 메모 · 인덱스", Width = 38, Height = 78, WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize,
-                    AllowsTransparency = true, Background = Brushes.Transparent, ShowInTaskbar = false, ShowActivated = false, Topmost = true, Icon = Window.Icon, FontFamily = Window.FontFamily, Resources = Window.Resources };
+                    AllowsTransparency = true, Background = Brushes.Transparent, ShowInTaskbar = false, ShowActivated = false, Topmost = true, Icon = Window.Icon, FontFamily = Window.FontFamily };
                 var label = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
                 label.Children.Add(new TextBlock { Text = "\uE70B", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = Font(14), HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0,0,0,7) });
                 label.Children.Add(new TextBlock { Text = "메모", FontSize = Font(11), HorizontalAlignment = HorizontalAlignment.Center });
@@ -696,7 +709,7 @@ namespace StickyTodo
                     Store.Data.Settings.IndexTop = indexWindow.Top; Persist(); e.Handled = true;
                 };
                 indexButton.PreviewMouseLeftButtonUp += delegate(object sender, MouseButtonEventArgs e) { if(dragged) e.Handled = true; };
-                var menu = new ContextMenu { Resources = Window.Resources };
+                var menu = new ContextMenu();
                 menu.Items.Add(MenuItem("메모 열기", RestoreFromIndex));
                 menu.Items.Add(MenuItem("작업 표시줄로 최소화", MinimizeToTaskbar));
                 indexButton.ContextMenu = menu;
@@ -725,7 +738,6 @@ namespace StickyTodo
         {
             var dialog = new Window { Title = "메모 수정", Owner = Window, Width = 350, MinHeight = 355, SizeToContent = SizeToContent.Height, ResizeMode = ResizeMode.NoResize, WindowStyle = WindowStyle.None, AllowsTransparency = true, WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Background = Brushes.Transparent, Foreground = Brush("Ink"), FontFamily = Window.FontFamily, FontSize = Font(13), ShowInTaskbar = false, Topmost = Window.Topmost };
-            dialog.Resources = Window.Resources;
             NameScope.SetNameScope(dialog,new NameScope());
             var panel = new StackPanel { Margin = new Thickness(20) };
             var header = new DockPanel { Margin = new Thickness(0,0,0,18) };
@@ -761,7 +773,7 @@ namespace StickyTodo
         }
         void ShowMenu()
         {
-            var menu = new ContextMenu { Resources = Window.Resources, PlacementTarget = Find<Button>("MenuButton"), Placement = PlacementMode.Bottom };
+            var menu = new ContextMenu { PlacementTarget = Find<Button>("MenuButton"), Placement = PlacementMode.Bottom };
             menu.Items.Add(MenuItem("오른쪽 인덱스로 접기", DockToIndex));
             menu.Items.Add(MenuItem("작업 표시줄로 최소화", MinimizeToTaskbar));
             menu.Items.Add(new Separator());
@@ -1108,8 +1120,10 @@ namespace StickyTodo
                             }));
                         };
                     }
+                    AppDomain.CurrentDomain.UnhandledException += delegate(object sender, UnhandledExceptionEventArgs e) { LogError(dataPath, e.ExceptionObject); };
                     application.DispatcherUnhandledException += delegate(object sender, DispatcherUnhandledExceptionEventArgs e)
                     {
+                        LogError(dataPath, e.Exception);
                         MessageBox.Show(note.Window, "작업을 처리하지 못했습니다.\n" + e.Exception.Message, "하루 메모", MessageBoxButton.OK, MessageBoxImage.Warning); e.Handled = true;
                     };
                     return application.Run(note.Window);
@@ -1122,6 +1136,10 @@ namespace StickyTodo
                 else MessageBox.Show("하루 메모를 열지 못했습니다.\n" + error.Message, "하루 메모", MessageBoxButton.OK, MessageBoxImage.Error);
                 return 1;
             }
+        }
+        static void LogError(string dataPath, object error)
+        {
+            try { File.AppendAllText(Path.Combine(Path.GetDirectoryName(dataPath), "error.log"), DateTime.Now.ToString("o") + Environment.NewLine + error + Environment.NewLine + Environment.NewLine, Encoding.UTF8); } catch { }
         }
         static string StableKey(string path)
         {
