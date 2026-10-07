@@ -285,7 +285,12 @@
       </Grid.RowDefinitions>
       <Grid x:Name="DragArea" Margin="0,-4,-6,16" Background="Transparent">
         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <TextBlock x:Name="DateTitle" VerticalAlignment="Center" FontSize="15" FontWeight="SemiBold"/>
+        <Button x:Name="DateButton" HorizontalAlignment="Left" Padding="4,0" Margin="-4,0,0,0" Cursor="Hand" ToolTip="날짜 선택 · 드래그하여 메모 이동" AutomationProperties.Name="상단 날짜 선택">
+          <TextBlock x:Name="DateTitle" VerticalAlignment="Center" FontSize="15" FontWeight="SemiBold"/>
+        </Button>
+        <Popup x:Name="HeaderDatePopup" Placement="Bottom" PlacementTarget="{Binding ElementName=DateButton}" AllowsTransparency="True" StaysOpen="False">
+          <Calendar x:Name="HeaderCalendar" Style="{StaticResource PaperCalendar}" SelectionMode="SingleDate" AutomationProperties.Name="상단 날짜 선택 달력"/>
+        </Popup>
         <StackPanel Grid.Column="1" Orientation="Horizontal">
           <StackPanel x:Name="HeaderExtras" Orientation="Horizontal" Visibility="Collapsed">
             <Button x:Name="PinButton" Content="&#xE718;" Style="{StaticResource IconButton}" ToolTip="항상 위에 고정" AutomationProperties.Name="항상 위에 고정"/>

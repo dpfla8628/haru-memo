@@ -262,6 +262,34 @@ namespace StickyTodo
         }
         void Wire()
         {
+            var dateButton = Find<Button>("DateButton");
+            var headerPopup = Find<Popup>("HeaderDatePopup");
+            var headerCalendar = Find<Calendar>("HeaderCalendar");
+            dateButton.Click += delegate
+            {
+                headerCalendar.SelectedDate = selected; headerCalendar.DisplayDate = selected;
+                headerPopup.IsOpen = !headerPopup.IsOpen;
+                if (headerPopup.IsOpen) headerCalendar.Focus();
+            };
+            Action selectHeaderDate = delegate
+            {
+                if (!headerPopup.IsOpen || !headerCalendar.SelectedDate.HasValue) return;
+                DateTime date = headerCalendar.SelectedDate.Value;
+                headerPopup.IsOpen = false; SetMode(false); SelectDate(date); dateButton.Focus();
+            };
+            headerCalendar.SelectedDatesChanged += delegate { selectHeaderDate(); };
+            headerCalendar.PreviewKeyDown += delegate(object sender,KeyEventArgs e) { if (e.Key == Key.Escape) { headerPopup.IsOpen = false; dateButton.Focus(); e.Handled = true; } };
+            headerCalendar.AddHandler(Button.ClickEvent,new RoutedEventHandler(delegate(object sender,RoutedEventArgs e) { if (e.OriginalSource is CalendarDayButton) selectHeaderDate(); }));
+            Point? dateDragStart = null;
+            dateButton.PreviewMouseLeftButtonDown += delegate(object sender,MouseButtonEventArgs e) { dateDragStart = e.GetPosition(Window); };
+            dateButton.PreviewMouseMove += delegate(object sender,MouseEventArgs e)
+            {
+                if (!dateDragStart.HasValue || e.LeftButton != MouseButtonState.Pressed) return;
+                Point current = e.GetPosition(Window), start = dateDragStart.Value;
+                if (Math.Abs(current.X-start.X) < SystemParameters.MinimumHorizontalDragDistance && Math.Abs(current.Y-start.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+                dateDragStart = null; dateButton.ReleaseMouseCapture(); e.Handled = true;
+                try { Window.DragMove(); } catch (InvalidOperationException) { }
+            };
             Find<Button>("CloseButton").Click += delegate { Window.Close(); };
             Find<Button>("ExpandButton").Click += delegate { SetExpanded(!expanded); };
             Find<Button>("DockButton").Click += delegate { DockToIndex(); };
@@ -745,6 +773,29 @@ namespace StickyTodo
             Require(Find<StackPanel>("ExpandedTools").Visibility == Visibility.Collapsed && Find<StackPanel>("DayHeader").Visibility == Visibility.Collapsed && Find<Grid>("Footer").Visibility == Visibility.Collapsed, "기본 확장 UI 숨김");
             Capture(Path.Combine(dir,"compact-empty.png"));
             DateTime today = DateTime.Today;
+            Todo compactDateTask = Store.Add(today.AddDays(-2),"접힌 화면에서 날짜 이동 확인"); compactDateTask.Done = true; Render();
+            Find<Button>("DateButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); FlushUi(Window.Dispatcher);
+            var compactPopup = Find<Popup>("HeaderDatePopup");
+            var compactCalendar = Find<Calendar>("HeaderCalendar");
+            Require(compactPopup.IsOpen && !expanded && compactCalendar.SelectedDate == today,"접힌 화면의 날짜 클릭으로 달력 열기");
+            var compactBody = (CalendarItem)compactCalendar.Template.FindName("PART_CalendarItem",compactCalendar);
+            var compactMonth = (Grid)compactBody.Template.FindName("PART_MonthView",compactBody);
+            ((Button)compactBody.Template.FindName("PART_NextButton",compactBody)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Require(compactPopup.IsOpen && compactCalendar.DisplayDate.Month == today.AddMonths(1).Month,"상단 달력의 다음 달 이동");
+            ((Button)compactBody.Template.FindName("PART_PreviousButton",compactBody)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); FlushUi(Window.Dispatcher);
+            var compactRecordedDay = compactMonth.Children.OfType<CalendarDayButton>().First(b => b.DataContext is DateTime && ((DateTime)b.DataContext).Date == today.AddDays(-2));
+            Require(Object.Equals(compactRecordedDay.Tag,true),"상단 달력의 기록 날짜 색상 표시");
+            CaptureElement(compactCalendar,Path.Combine(dir,"compact-calendar.png"));
+            compactRecordedDay.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); FlushUi(Window.Dispatcher);
+            Require(!compactPopup.IsOpen && !expanded && selected == today.AddDays(-2) && VisibleTasks().Count == 1,"날짜 선택 후 접힌 상태로 해당 목록 이동");
+            Find<Button>("DateButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); FlushUi(Window.Dispatcher);
+            var compactSelectedDay = compactMonth.Children.OfType<CalendarDayButton>().First(b => b.DataContext is DateTime && ((DateTime)b.DataContext).Date == selected);
+            compactSelectedDay.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Require(!compactPopup.IsOpen,"현재 날짜를 다시 선택해도 달력 닫기");
+            Find<Button>("DateButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); FlushUi(Window.Dispatcher);
+            compactCalendar.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice,PresentationSource.FromVisual(Window),0,Key.Escape) { RoutedEvent = Keyboard.PreviewKeyDownEvent });
+            Require(!compactPopup.IsOpen,"Escape로 상단 달력 닫기");
+            Store.Data.Tasks.Remove(compactDateTask); SelectDate(today);
             var linkItem = new Todo { Id = "link-check", Date = Store.Key(today), Text = "자료 (https://example.com/a_(b)?q=1&next=2#part), www.example.org/path. 끝 https://예시.한국/문서" };
             var linkRow = (Border)TaskRow(linkItem);
             var linkEdit = ((Grid)linkRow.Child).Children.OfType<Button>().First();
@@ -910,7 +961,7 @@ namespace StickyTodo
             var reopened = new NoteApp(reloaded);
             Require(!reopened.expanded && Math.Abs(reopened.Window.Width-280)<2 && Math.Abs(reopened.Window.Height-240)<2 && reopened.Find<StackPanel>("ExpandedTools").Visibility == Visibility.Collapsed, "재실행은 항상 접힌 화면");
             reopened.Window.Close();
-            File.WriteAllText(Path.Combine(dir, "ui-test-result.txt"), "PASS: web link detection and click routing, text preservation, completed links, minimal default, expansion/collapse, native topmost/resize, custom calendar navigation/day selection, recorded-date colors and dots, completed-date marking, live add/move/delete/undo/color updates, styled task menu, delete/undo notice and timed expiry, edit text/date, history/filter/search, right-edge index tab and click restoration, duplicate-launch restoration, normal taskbar minimization, size/settings/data persistence.");
+            File.WriteAllText(Path.Combine(dir, "ui-test-result.txt"), "PASS: compact header date calendar and navigation, web link detection and click routing, text preservation, completed links, minimal default, expansion/collapse, native topmost/resize, custom calendar navigation/day selection, recorded-date colors and dots, completed-date marking, live add/move/delete/undo/color updates, styled task menu, delete/undo notice and timed expiry, edit text/date, history/filter/search, right-edge index tab and click restoration, duplicate-launch restoration, normal taskbar minimization, size/settings/data persistence.");
         }
         static void Require(bool value, string message) { if (!value) throw new Exception("확인 실패: " + message); }
     }
