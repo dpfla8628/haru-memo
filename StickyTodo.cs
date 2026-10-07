@@ -213,6 +213,13 @@ namespace StickyTodo
                 var source = System.Windows.Interop.HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(Window).Handle);
                 source.AddHook(delegate(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
                 {
+                    if (message == 0x0084 && Window.WindowState == WindowState.Normal)
+                    {
+                        long coordinates = lParam.ToInt64();
+                        Point point = Window.PointFromScreen(new Point((short)(coordinates & 0xffff),(short)((coordinates >> 16) & 0xffff)));
+                        int edge = ResizeHit(point);
+                        if (edge != 0) { handled = true; return new IntPtr(edge); }
+                    }
                     if (message == Program.RestoreMessage) { RestoreFromIndex(); handled = true; }
                     return IntPtr.Zero;
                 });
@@ -243,6 +250,21 @@ namespace StickyTodo
             Window.Top = s.Top < 0 ? screen.Top + 56 : Math.Max(screen.Top, Math.Min(Valid(s.Top, screen.Top), screen.Bottom - Window.Height));
         }
         static double Valid(double n, double fallback) { return Double.IsNaN(n) || Double.IsInfinity(n) ? fallback : n; }
+        int ResizeHit(Point point)
+        {
+            double width = Window.ActualWidth, height = Window.ActualHeight;
+            if (point.X < 0 || point.Y < 0 || point.X >= width || point.Y >= height) return 0;
+            bool left = point.X < 12, right = point.X >= width-12, top = point.Y < 12, bottom = point.Y >= height-12;
+            if (top && left) return 13;
+            if (top && right) return 14;
+            if (bottom && left) return 16;
+            if (bottom && right) return 17;
+            if (point.X < 5) return 10;
+            if (point.X >= width-5) return 11;
+            if (point.Y < 5) return 12;
+            if (point.Y >= height-5) return 15;
+            return 0;
+        }
         void SaveGeometry()
         {
             if (Window.WindowState != WindowState.Normal) return;
@@ -772,6 +794,7 @@ namespace StickyTodo
             using (FileStream stream = File.Create(path)) png.Save(stream);
         }
         [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr hwnd, int index);
+        [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam);
         [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW")] static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
         static long NativeStyle(IntPtr hwnd, int index) { return IntPtr.Size == 8 ? GetWindowLongPtr(hwnd,index).ToInt64() : GetWindowLong(hwnd,index); }
         static void FlushUi(Dispatcher dispatcher)
@@ -893,6 +916,16 @@ namespace StickyTodo
             WaitForTopmost(nativeHandle);
             Require((NativeStyle(nativeHandle,-20) & 8) != 0, "네이티브 항상 위 플래그: " + NativeStyle(nativeHandle,-20).ToString("X") + " visible=" + Window.IsVisible + " state=" + Window.WindowState + " handles=" + nativeHandle + "/" + Process.GetCurrentProcess().MainWindowHandle);
             Require(Window.ResizeMode == ResizeMode.CanResizeWithGrip, "메모 크기 조절 손잡이 설정");
+            Require((NativeStyle(nativeHandle,-16) & 0x40000) != 0,"네이티브 창 크기 조절 가능");
+            Point[] resizePoints = { new Point(2,2), new Point(Window.ActualWidth-2,2), new Point(2,Window.ActualHeight-2), new Point(Window.ActualWidth-2,Window.ActualHeight-2), new Point(2,Window.ActualHeight/2), new Point(Window.ActualWidth-2,Window.ActualHeight/2), new Point(Window.ActualWidth/2,2), new Point(Window.ActualWidth/2,Window.ActualHeight-2) };
+            int[] resizeCodes = { 13,14,16,17,10,11,12,15 };
+            for (int corner = 0; corner < resizePoints.Length; corner++)
+            {
+                Point screenPoint = Window.PointToScreen(resizePoints[corner]);
+                int packed = unchecked((ushort)(short)Math.Round(screenPoint.X) | ((ushort)(short)Math.Round(screenPoint.Y) << 16));
+                Require(SendMessage(nativeHandle,0x0084,IntPtr.Zero,new IntPtr(packed)).ToInt32() == resizeCodes[corner],"네 모서리와 가장자리 크기 조절 감지 " + corner);
+            }
+            Require(ResizeHit(new Point(Window.ActualWidth/2,Window.ActualHeight/2)) == 0,"메모 내용 영역은 크기 조절에서 제외");
             Find<Button>("PinButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Find<Button>("PrevButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Require(VisibleTasks().Count == 1, "날짜 이동");
