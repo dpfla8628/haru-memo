@@ -58,6 +58,7 @@ namespace StickyTodo
         public double ExpandedWidth { get; set; }
         public double ExpandedHeight { get; set; }
         public double IndexTop { get; set; }
+        public double Transparency { get; set; }
         public Settings() { ShowCompleted = true; Width = CompactWidth = 330; Height = CompactHeight = 360; ExpandedWidth = 420; ExpandedHeight = 610; Left = -1; Top = -1; IndexTop = -1; }
     }
     public class NoteData
@@ -185,6 +186,8 @@ namespace StickyTodo
             var iconStream = Assembly.GetExecutingAssembly().GetManifestResourceStream("Note.ico");
             if (iconStream != null) using (iconStream) Window.Icon = BitmapFrame.Create(iconStream);
             Wire();
+            Find<Slider>("TransparencySlider").Value = Math.Max(0,Math.Min(80,Valid(Store.Data.Settings.Transparency,0)));
+            ApplyTransparency();
             SetGeometry();
             SetColor(Store.Data.Settings.Color);
             Window.Topmost = Store.Data.Settings.Topmost;
@@ -262,6 +265,7 @@ namespace StickyTodo
         }
         void Wire()
         {
+            Find<Slider>("TransparencySlider").ValueChanged += delegate { ApplyTransparency(); };
             var dateButton = Find<Button>("DateButton");
             var headerPopup = Find<Popup>("HeaderDatePopup");
             var headerCalendar = Find<Calendar>("HeaderCalendar");
@@ -374,6 +378,14 @@ namespace StickyTodo
             Find<Grid>("Footer").Visibility = expanded || saveFailed ? Visibility.Visible : Visibility.Collapsed;
         }
         public void SelectDate(DateTime date) { selected = date.Date; Render(); Find<ScrollViewer>("TaskScroll").ScrollToTop(); }
+        void ApplyTransparency()
+        {
+            double value = Find<Slider>("TransparencySlider").Value;
+            Window.Opacity = 1-value/100;
+            Store.Data.Settings.Transparency = value;
+            Find<TextBlock>("TransparencyValue").Text = value.ToString("0",CultureInfo.InvariantCulture) + "%";
+            if (ready) { geometryTimer.Stop(); geometryTimer.Start(); }
+        }
         void AddTask()
         {
             TextBox input = Find<TextBox>("NewTask");
@@ -773,6 +785,17 @@ namespace StickyTodo
             Require(Find<StackPanel>("ExpandedTools").Visibility == Visibility.Collapsed && Find<StackPanel>("DayHeader").Visibility == Visibility.Collapsed && Find<Grid>("Footer").Visibility == Visibility.Collapsed, "기본 확장 UI 숨김");
             Capture(Path.Combine(dir,"compact-empty.png"));
             DateTime today = DateTime.Today;
+            var transparencySlider = Find<Slider>("TransparencySlider");
+            Require(transparencySlider.IsVisible && Window.Opacity == 1,"접힌 화면의 투명도 슬라이더와 기본 불투명 상태");
+            transparencySlider.Value = 80;
+            Require(Math.Abs(Window.Opacity-0.2)<0.001 && Store.Data.Settings.Transparency == 80 && Find<TextBlock>("TransparencyValue").Text == "80%","투명도 즉시 반영과 최댓값");
+            transparencySlider.Value = 0;
+            Require(Window.Opacity == 1,"투명도 0%로 복원");
+            transparencySlider.ApplyTemplate();
+            var transparencyTrack = (Track)transparencySlider.Template.FindName("PART_Track",transparencySlider);
+            transparencyTrack.Thumb.RaiseEvent(new DragDeltaEventArgs(30,0) { RoutedEvent = Thumb.DragDeltaEvent });
+            Require(transparencySlider.Value > 0 && Window.Opacity < 1,"투명도 손잡이 드래그 동작");
+            transparencySlider.Value = 0;
             Todo compactDateTask = Store.Add(today.AddDays(-2),"접힌 화면에서 날짜 이동 확인"); compactDateTask.Done = true; Render();
             Find<Button>("DateButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); FlushUi(Window.Dispatcher);
             var compactPopup = Find<Popup>("HeaderDatePopup");
@@ -957,11 +980,13 @@ namespace StickyTodo
             DockToIndex(); MinimizeToTaskbar(); FlushUi(Window.Dispatcher);
             Require(Window.WindowState==WindowState.Minimized && Window.ShowInTaskbar && !indexWindow.IsVisible,"기존 작업 표시줄 최소화 유지");
             RestoreFromIndex(); FlushUi(Window.Dispatcher);
-            Persist(); var reloaded = new Store(Store.PathName); Require(reloaded.Data.Tasks.Count == 5 && reloaded.Data.Settings.Color == 4, "재실행 저장");
+            transparencySlider.Value = 40; PumpFor(650);
+            var reloaded = new Store(Store.PathName); Require(reloaded.Data.Tasks.Count == 5 && reloaded.Data.Settings.Color == 4 && reloaded.Data.Settings.Transparency == 40, "재실행 저장과 투명도 자동 저장");
             var reopened = new NoteApp(reloaded);
+            Require(Math.Abs(reopened.Window.Opacity-0.6)<0.001 && reopened.Find<Slider>("TransparencySlider").Value == 40,"투명도 설정 재실행 복원");
             Require(!reopened.expanded && Math.Abs(reopened.Window.Width-280)<2 && Math.Abs(reopened.Window.Height-240)<2 && reopened.Find<StackPanel>("ExpandedTools").Visibility == Visibility.Collapsed, "재실행은 항상 접힌 화면");
             reopened.Window.Close();
-            File.WriteAllText(Path.Combine(dir, "ui-test-result.txt"), "PASS: compact header date calendar and navigation, web link detection and click routing, text preservation, completed links, minimal default, expansion/collapse, native topmost/resize, custom calendar navigation/day selection, recorded-date colors and dots, completed-date marking, live add/move/delete/undo/color updates, styled task menu, delete/undo notice and timed expiry, edit text/date, history/filter/search, right-edge index tab and click restoration, duplicate-launch restoration, normal taskbar minimization, size/settings/data persistence.");
+            File.WriteAllText(Path.Combine(dir, "ui-test-result.txt"), "PASS: transparency slider drag, opacity updates and persistence, compact header date calendar and navigation, web link detection and click routing, text preservation, completed links, minimal default, expansion/collapse, native topmost/resize, custom calendar navigation/day selection, recorded-date colors and dots, completed-date marking, live add/move/delete/undo/color updates, styled task menu, delete/undo notice and timed expiry, edit text/date, history/filter/search, right-edge index tab and click restoration, duplicate-launch restoration, normal taskbar minimization, size/settings/data persistence.");
         }
         static void Require(bool value, string message) { if (!value) throw new Exception("확인 실패: " + message); }
     }
@@ -1042,8 +1067,8 @@ namespace StickyTodo
             Check(Store.Csv(store.Data.Tasks).Contains("\"\"따옴표\"\""),"CSV 인용");
             Todo formula = store.Add(date,"=1+1"); Check(Store.Csv(new[] {formula}).Contains("'=1+1"),"CSV 수식 방지");
             bool blankRejected = false; try {store.Add(date,"  ");} catch(ArgumentException) {blankRejected=true;} Check(blankRejected,"빈 할 일");
-            store.Data.Settings.Color = 3; store.Data.Settings.Topmost = true; store.Save();
-            Store reload = new Store(path); Check(reload.Data.Tasks.Count == 3 && reload.Data.Settings.Color == 3 && reload.Data.Settings.Topmost,"영구 저장");
+            store.Data.Settings.Color = 3; store.Data.Settings.Topmost = true; store.Data.Settings.Transparency = 35; store.Save();
+            Store reload = new Store(path); Check(reload.Data.Tasks.Count == 3 && reload.Data.Settings.Color == 3 && reload.Data.Settings.Topmost && reload.Data.Settings.Transparency == 35,"영구 저장");
             reload.Data.Tasks[0].Text = "수정됨"; reload.Save(); Check(File.Exists(path+".bak"),"원자적 백업");
             File.WriteAllText(path,"{broken"); Store recovery = new Store(path); Check(recovery.Data.Tasks.Count == 3 && recovery.RecoveryNotice != null,"손상 파일 백업 복구");
             string invalid = Path.Combine(dir,Guid.NewGuid().ToString("N"),"notes.json"); Directory.CreateDirectory(Path.GetDirectoryName(invalid)); File.WriteAllText(invalid,"null");

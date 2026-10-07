@@ -276,12 +276,26 @@
     <Style x:Key="Tab" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
       <Setter Property="FontSize" Value="12"/><Setter Property="Padding" Value="12,6"/>
     </Style>
+    <Style TargetType="Slider">
+      <Setter Property="Height" Value="22"/><Setter Property="IsMoveToPointEnabled" Value="True"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Slider">
+        <Grid Background="Transparent">
+          <Track x:Name="PART_Track" Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}" Value="{TemplateBinding Value}" Orientation="Horizontal">
+            <Track.DecreaseRepeatButton><RepeatButton Command="Slider.DecreaseLarge"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Height="2" Background="{DynamicResource Muted}" CornerRadius="1" VerticalAlignment="Center"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.DecreaseRepeatButton>
+            <Track.Thumb><Thumb Width="11" Height="22" Cursor="Hand"><Thumb.Template><ControlTemplate TargetType="Thumb"><Ellipse Height="11" Fill="{DynamicResource Field}" Stroke="{DynamicResource Muted}" StrokeThickness="1" VerticalAlignment="Center"/></ControlTemplate></Thumb.Template></Thumb></Track.Thumb>
+            <Track.IncreaseRepeatButton><RepeatButton Command="Slider.IncreaseLarge"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Height="2" Background="{DynamicResource Rule}" CornerRadius="1" VerticalAlignment="Center"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.IncreaseRepeatButton>
+          </Track>
+          <Border x:Name="FocusRing" BorderBrush="{DynamicResource Rule}" BorderThickness="1" CornerRadius="3" Visibility="Collapsed" IsHitTestVisible="False"/>
+        </Grid>
+        <ControlTemplate.Triggers><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="FocusRing" Property="Visibility" Value="Visible"/></Trigger></ControlTemplate.Triggers>
+      </ControlTemplate></Setter.Value></Setter>
+    </Style>
   </Window.Resources>
   <Border x:Name="PaperBorder" BorderBrush="{DynamicResource Rule}" BorderThickness="1">
     <Grid Margin="18,12,18,14">
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-        <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
       </Grid.RowDefinitions>
       <Grid x:Name="DragArea" Margin="0,-4,-6,16" Background="Transparent">
         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -364,6 +378,12 @@
         <DockPanel Grid.Row="1" Margin="0,7,0,0" LastChildFill="True">
           <TextBlock x:Name="Status" Text="자동 저장" FontSize="11" Foreground="{DynamicResource Muted}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
         </DockPanel>
+      </Grid>
+      <Grid Grid.Row="6" Margin="0,6,0,-4">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="34"/></Grid.ColumnDefinitions>
+        <TextBlock Text="투명도" Foreground="{DynamicResource Muted}" FontSize="10" VerticalAlignment="Center" Margin="0,0,10,0"/>
+        <Slider x:Name="TransparencySlider" Grid.Column="1" Minimum="0" Maximum="80" SmallChange="1" LargeChange="10" TickFrequency="1" IsSnapToTickEnabled="True" AutomationProperties.Name="메모 투명도" ToolTip="오른쪽으로 움직일수록 투명해집니다"/>
+        <TextBlock x:Name="TransparencyValue" Grid.Column="2" Text="0%" Foreground="{DynamicResource Muted}" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Right"/>
       </Grid>
     </Grid>
   </Border>
