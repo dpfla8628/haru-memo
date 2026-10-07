@@ -407,9 +407,16 @@ namespace StickyTodo
         void ApplyTransparency()
         {
             double value = Find<Slider>("TransparencySlider").Value;
-            Window.Opacity = 1-value/100;
+            Window.Opacity = 1;
             Store.Data.Settings.Transparency = value;
+            UpdatePaperTransparency();
             if (ready) { geometryTimer.Stop(); geometryTimer.Start(); }
+        }
+        void UpdatePaperTransparency()
+        {
+            var paper = (SolidColorBrush)Brush("Paper").Clone();
+            paper.Opacity = 1-Store.Data.Settings.Transparency/100;
+            Window.Resources["MemoPaper"] = paper;
         }
         double Font(double size) { return size*Store.Data.Settings.FontSize/13; }
         void ApplyFontSize()
@@ -438,6 +445,7 @@ namespace StickyTodo
             index = Math.Max(0, Math.Min(colors.Length - 1, index));
             Store.Data.Settings.Color = index;
             Window.Resources["Paper"] = Hex(colors[index]);
+            UpdatePaperTransparency();
             Window.Resources["Hover"] = Hex(hoverColors[index]);
             Window.Resources["Rule"] = Hex(ruleColors[index]);
             if (indexWindow != null) { ((Border)indexWindow.Content).Background = Brush("Paper"); ((Border)indexWindow.Content).BorderBrush = Brush("Rule"); }
@@ -829,13 +837,22 @@ namespace StickyTodo
             var transparencySlider = Find<Slider>("TransparencySlider");
             Require(transparencySlider.IsVisible && Window.Opacity == 1,"접힌 화면의 투명도 슬라이더와 기본 불투명 상태");
             transparencySlider.Value = 80;
-            Require(Math.Abs(Window.Opacity-0.2)<0.001 && Store.Data.Settings.Transparency == 80,"투명도 즉시 반영과 최댓값");
+            Require(Window.Opacity == 1 && Math.Abs(Brush("MemoPaper").Opacity-0.2)<0.001 && Store.Data.Settings.Transparency == 80,"배경만 투명하게 하고 글자 선명도 유지");
+            FlushUi(Window.Dispatcher); Window.UpdateLayout();
+            var transparentBitmap = new RenderTargetBitmap((int)Window.ActualWidth,(int)Window.ActualHeight,96,96,PixelFormats.Pbgra32);
+            transparentBitmap.Render(Window);
+            byte[] transparentPixel = new byte[4];
+            transparentBitmap.CopyPixels(new Int32Rect(8,(int)Window.ActualHeight-30,1,1),transparentPixel,4,0);
+            Require(transparentPixel[3] >= 50 && transparentPixel[3] <= 52,"회색 바탕 대신 실제 투명 알파 픽셀: " + transparentPixel[3]);
+            SetColor(1);
+            Require(((SolidColorBrush)Brush("MemoPaper")).Color == (Color)ColorConverter.ConvertFromString("#F8DED8") && Math.Abs(Brush("MemoPaper").Opacity-0.2)<0.001,"색상 변경 시 배경 투명도 유지");
+            SetColor(0);
             transparencySlider.Value = 0;
-            Require(Window.Opacity == 1,"투명도 0%로 복원");
+            Require(Window.Opacity == 1 && Brush("MemoPaper").Opacity == 1,"투명도 0%로 복원");
             transparencySlider.ApplyTemplate();
             var transparencyTrack = (Track)transparencySlider.Template.FindName("PART_Track",transparencySlider);
             transparencyTrack.Thumb.RaiseEvent(new DragDeltaEventArgs(30,0) { RoutedEvent = Thumb.DragDeltaEvent });
-            Require(transparencySlider.Value > 0 && Window.Opacity < 1,"투명도 손잡이 드래그 동작");
+            Require(transparencySlider.Value > 0 && Window.Opacity == 1 && Brush("MemoPaper").Opacity < 1,"투명도 손잡이 드래그 동작");
             transparencySlider.Value = 0;
             Todo compactDateTask = Store.Add(today.AddDays(-2),"접힌 화면에서 날짜 이동 확인"); compactDateTask.Done = true; Render();
             Find<Button>("DateButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); FlushUi(Window.Dispatcher);
@@ -1044,7 +1061,7 @@ namespace StickyTodo
             var reloaded = new Store(Store.PathName); Require(reloaded.Data.Tasks.Count == 5 && reloaded.Data.Settings.Color == 4 && reloaded.Data.Settings.Transparency == 40, "재실행 저장과 투명도 자동 저장");
             var reopened = new NoteApp(reloaded);
             Require(reloaded.Data.Settings.FontSize == 14 && reopened.Find<TextBox>("NewTask").FontSize == 14,"글자 크기 저장과 재실행 복원");
-            Require(Math.Abs(reopened.Window.Opacity-0.6)<0.001 && reopened.Find<Slider>("TransparencySlider").Value == 40,"투명도 설정 재실행 복원");
+            Require(reopened.Window.Opacity == 1 && Math.Abs(reopened.Brush("MemoPaper").Opacity-0.6)<0.001 && reopened.Find<Slider>("TransparencySlider").Value == 40,"배경 투명도 설정 재실행 복원");
             Require(!reopened.expanded && Math.Abs(reopened.Window.Width-280)<2 && Math.Abs(reopened.Window.Height-240)<2 && reopened.Find<StackPanel>("ExpandedTools").Visibility == Visibility.Collapsed, "재실행은 항상 접힌 화면");
             reopened.Window.Close();
             File.WriteAllText(Path.Combine(dir, "ui-test-result.txt"), "PASS: global font size buttons, limits and persistence, transparency slider drag, opacity updates and persistence, compact header date calendar and navigation, web link detection and click routing, text preservation, completed links, minimal default, expansion/collapse, native topmost/resize, custom calendar navigation/day selection, recorded-date colors and dots, completed-date marking, live add/move/delete/undo/color updates, styled task menu, delete/undo notice and timed expiry, edit text/date, history/filter/search, right-edge index tab and click restoration, duplicate-launch restoration, normal taskbar minimization, size/settings/data persistence.");

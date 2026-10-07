@@ -4,7 +4,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:StickyTodo;assembly=HaruMemo"
         Title="하루 메모" Width="330" Height="360" MinWidth="280" MinHeight="240"
-        WindowStyle="None" ResizeMode="CanResizeWithGrip" AllowsTransparency="True" Background="{DynamicResource Paper}"
+        WindowStyle="None" ResizeMode="CanResizeWithGrip" AllowsTransparency="True" Background="Transparent"
         FontFamily="Malgun Gothic" FontSize="{DynamicResource Font13}" Foreground="{DynamicResource Ink}"
         UseLayoutRounding="True" SnapsToDevicePixels="True">
   <Window.Resources>
@@ -291,7 +291,7 @@
       </ControlTemplate></Setter.Value></Setter>
     </Style>
   </Window.Resources>
-  <Border x:Name="PaperBorder" BorderBrush="{DynamicResource Rule}" BorderThickness="1">
+  <Border x:Name="PaperBorder" Background="{DynamicResource MemoPaper}" BorderBrush="{DynamicResource Rule}" BorderThickness="1">
     <Grid Margin="18,12,18,14">
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
