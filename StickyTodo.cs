@@ -59,7 +59,8 @@ namespace StickyTodo
         public double ExpandedHeight { get; set; }
         public double IndexTop { get; set; }
         public double Transparency { get; set; }
-        public Settings() { ShowCompleted = true; Width = CompactWidth = 330; Height = CompactHeight = 360; ExpandedWidth = 420; ExpandedHeight = 610; Left = -1; Top = -1; IndexTop = -1; }
+        public double FontSize { get; set; }
+        public Settings() { ShowCompleted = true; FontSize = 13; Width = CompactWidth = 330; Height = CompactHeight = 360; ExpandedWidth = 420; ExpandedHeight = 610; Left = -1; Top = -1; IndexTop = -1; }
     }
     public class NoteData
     {
@@ -186,6 +187,7 @@ namespace StickyTodo
             var iconStream = Assembly.GetExecutingAssembly().GetManifestResourceStream("Note.ico");
             if (iconStream != null) using (iconStream) Window.Icon = BitmapFrame.Create(iconStream);
             Wire();
+            ApplyFontSize();
             Find<Slider>("TransparencySlider").Value = Math.Max(0,Math.Min(80,Valid(Store.Data.Settings.Transparency,0)));
             ApplyTransparency();
             SetGeometry();
@@ -265,6 +267,8 @@ namespace StickyTodo
         }
         void Wire()
         {
+            Find<Button>("FontDecreaseButton").Click += delegate { ChangeFontSize(-1); };
+            Find<Button>("FontIncreaseButton").Click += delegate { ChangeFontSize(1); };
             Find<Slider>("TransparencySlider").ValueChanged += delegate { ApplyTransparency(); };
             var dateButton = Find<Button>("DateButton");
             var headerPopup = Find<Popup>("HeaderDatePopup");
@@ -370,7 +374,7 @@ namespace StickyTodo
             Find<StackPanel>("DayHeader").Visibility = expanded && !history ? Visibility.Visible : Visibility.Collapsed;
             Find<StackPanel>("HistoryHeader").Visibility = history ? Visibility.Visible : Visibility.Collapsed;
             Find<StackPanel>("AddPanel").Visibility = history ? Visibility.Collapsed : Visibility.Visible;
-            Find<TextBlock>("DateTitle").FontSize = expanded ? 13 : 15;
+            Find<TextBlock>("DateTitle").FontSize = Font(expanded ? 13 : 15);
             Button button = Find<Button>("ExpandButton");
             button.Content = expanded ? "\uE73F" : "\uE740";
             button.ToolTip = expanded ? "접기 · 간단한 메모로 돌아가기" : "확장 · 기록 및 설정";
@@ -385,6 +389,21 @@ namespace StickyTodo
             Store.Data.Settings.Transparency = value;
             Find<TextBlock>("TransparencyValue").Text = value.ToString("0",CultureInfo.InvariantCulture) + "%";
             if (ready) { geometryTimer.Stop(); geometryTimer.Start(); }
+        }
+        double Font(double size) { return size*Store.Data.Settings.FontSize/13; }
+        void ApplyFontSize()
+        {
+            Store.Data.Settings.FontSize = Math.Max(10,Math.Min(18,Valid(Store.Data.Settings.FontSize,13)));
+            for (int size = 9; size <= 25; size++) Window.Resources["Font" + size] = Font(size);
+            Find<Button>("FontDecreaseButton").IsEnabled = Store.Data.Settings.FontSize > 10;
+            Find<Button>("FontIncreaseButton").IsEnabled = Store.Data.Settings.FontSize < 18;
+            Find<Button>("FontDecreaseButton").ToolTip = "글자 작게 · 현재 " + Store.Data.Settings.FontSize.ToString("0");
+            Find<Button>("FontIncreaseButton").ToolTip = "글자 크게 · 현재 " + Store.Data.Settings.FontSize.ToString("0");
+        }
+        void ChangeFontSize(int change)
+        {
+            Store.Data.Settings.FontSize += change;
+            ApplyFontSize(); UpdateView(); Render(); Persist();
         }
         void AddTask()
         {
@@ -450,8 +469,8 @@ namespace StickyTodo
                 string key = Store.Key(date);
                 var tasks = Store.Data.Tasks.Where(t => t.Date == key).ToList();
                 var stack = new StackPanel();
-                stack.Children.Add(new TextBlock { Text = date.ToString("ddd", korean), FontSize = 10, Foreground = Brush("Muted"), TextAlignment = TextAlignment.Center });
-                var number = new TextBlock { Text = date.Day.ToString(), FontSize = 15, FontWeight = date == selected ? FontWeights.Bold : FontWeights.Normal, TextAlignment = TextAlignment.Center, Margin = new Thickness(0,4,0,4) };
+                stack.Children.Add(new TextBlock { Text = date.ToString("ddd", korean), FontSize = Font(10), Foreground = Brush("Muted"), TextAlignment = TextAlignment.Center });
+                var number = new TextBlock { Text = date.Day.ToString(), FontSize = Font(15), FontWeight = date == selected ? FontWeights.Bold : FontWeights.Normal, TextAlignment = TextAlignment.Center, Margin = new Thickness(0,4,0,4) };
                 if (tasks.Count > 0 && tasks.All(t => t.Done)) number.TextDecorations = TextDecorations.Strikethrough;
                 stack.Children.Add(number);
                 var dot = new Border { Width = 3, Height = 3, CornerRadius = new CornerRadius(2), Background = tasks.Count > 0 ? Brush("Muted") : Brushes.Transparent, HorizontalAlignment = HorizontalAlignment.Center };
@@ -489,7 +508,7 @@ namespace StickyTodo
                 if (history && item.Date != lastDate)
                 {
                     DateTime date = DateTime.ParseExact(item.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture);
-                    var heading = new Button { Content = date.ToString("yyyy년 M월 d일 dddd", korean), FontWeight = FontWeights.Bold, FontSize = 12, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(-4,lastDate == null ? 0 : 16,0,4), Padding = new Thickness(4,5,4,5), ToolTip = "이 날짜의 메모 열기" };
+                    var heading = new Button { Content = date.ToString("yyyy년 M월 d일 dddd", korean), FontWeight = FontWeights.Bold, FontSize = Font(12), HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(-4,lastDate == null ? 0 : 16,0,4), Padding = new Thickness(4,5,4,5), ToolTip = "이 날짜의 메모 열기" };
                     heading.Click += delegate { selected = date; SetMode(false); };
                     list.Children.Add(heading); lastDate = item.Date;
                 }
@@ -504,12 +523,12 @@ namespace StickyTodo
         FrameworkElement Empty(string title, string help)
         {
             if (!expanded && !history)
-                return new TextBlock { Text = "할 일을 적어보세요.", Foreground = Brush("Muted"), FontSize = 12, Margin = new Thickness(3,16,0,0) };
+                return new TextBlock { Text = "할 일을 적어보세요.", Foreground = Brush("Muted"), FontSize = Font(12), Margin = new Thickness(3,16,0,0) };
             bool compact = Window.ActualHeight < 530;
             var stack = new StackPanel { Margin = new Thickness(4, compact ? 4 : 32,4,compact ? 4 : 20) };
-            if (!compact) stack.Children.Add(new TextBlock { Text = "\uE70B", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 24, Foreground = Brush("Muted"), Margin = new Thickness(0,0,0,14) });
-            stack.Children.Add(new TextBlock { Text = title, FontSize = 13, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0,0,0,6) });
-            stack.Children.Add(new TextBlock { Text = help, FontSize = 11, Foreground = Brush("Muted"), TextWrapping = TextWrapping.Wrap, LineHeight = 19 });
+            if (!compact) stack.Children.Add(new TextBlock { Text = "\uE70B", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = Font(24), Foreground = Brush("Muted"), Margin = new Thickness(0,0,0,14) });
+            stack.Children.Add(new TextBlock { Text = title, FontSize = Font(13), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0,0,0,6) });
+            stack.Children.Add(new TextBlock { Text = help, FontSize = Font(11), Foreground = Brush("Muted"), TextWrapping = TextWrapping.Wrap, LineHeight = Font(19) });
             return stack;
         }
         FrameworkElement TaskRow(Todo item)
@@ -559,7 +578,7 @@ namespace StickyTodo
         }
         TextBlock TaskText(Todo item)
         {
-            var text = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 13, LineHeight = 22, VerticalAlignment = VerticalAlignment.Center, Foreground = Brush(item.Done ? "Muted" : "Ink") };
+            var text = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = Font(13), LineHeight = Font(22), VerticalAlignment = VerticalAlignment.Center, Foreground = Brush(item.Done ? "Muted" : "Ink") };
             if (item.Done) text.TextDecorations = TextDecorations.Strikethrough;
             int position = 0;
             foreach (Match match in webLinks.Matches(item.Text))
@@ -629,8 +648,8 @@ namespace StickyTodo
                 indexWindow = new Window { Title = "하루 메모 · 인덱스", Width = 38, Height = 78, WindowStyle = WindowStyle.None, ResizeMode = ResizeMode.NoResize,
                     AllowsTransparency = true, Background = Brushes.Transparent, ShowInTaskbar = false, ShowActivated = false, Topmost = true, Icon = Window.Icon, FontFamily = Window.FontFamily, Resources = Window.Resources };
                 var label = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-                label.Children.Add(new TextBlock { Text = "\uE70B", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 14, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0,0,0,7) });
-                label.Children.Add(new TextBlock { Text = "메모", FontSize = 11, HorizontalAlignment = HorizontalAlignment.Center });
+                label.Children.Add(new TextBlock { Text = "\uE70B", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = Font(14), HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0,0,0,7) });
+                label.Children.Add(new TextBlock { Text = "메모", FontSize = Font(11), HorizontalAlignment = HorizontalAlignment.Center });
                 indexButton = new Button { Content = label, Padding = new Thickness(0), Style = (Style)Window.FindResource(typeof(Button)), ToolTip = "메모 열기 · 드래그하여 높이 조절" };
                 AutomationProperties.SetName(indexButton,"하루 메모 다시 열기");
                 indexWindow.Content = new Border { Child = indexButton, CornerRadius = new CornerRadius(7,0,0,7), Background = Brush("Paper"), BorderBrush = Brush("Rule"), BorderThickness = new Thickness(1,1,0,1) };
@@ -675,15 +694,15 @@ namespace StickyTodo
         }
         void Edit(Todo item)
         {
-            var dialog = new Window { Title = "메모 수정", Owner = Window, Width = 350, Height = 355, ResizeMode = ResizeMode.NoResize, WindowStyle = WindowStyle.None, AllowsTransparency = true, WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                Background = Brushes.Transparent, Foreground = Brush("Ink"), FontFamily = Window.FontFamily, FontSize = 13, ShowInTaskbar = false, Topmost = Window.Topmost };
+            var dialog = new Window { Title = "메모 수정", Owner = Window, Width = 350, MinHeight = 355, SizeToContent = SizeToContent.Height, ResizeMode = ResizeMode.NoResize, WindowStyle = WindowStyle.None, AllowsTransparency = true, WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Background = Brushes.Transparent, Foreground = Brush("Ink"), FontFamily = Window.FontFamily, FontSize = Font(13), ShowInTaskbar = false, Topmost = Window.Topmost };
             dialog.Resources = Window.Resources;
             NameScope.SetNameScope(dialog,new NameScope());
             var panel = new StackPanel { Margin = new Thickness(20) };
             var header = new DockPanel { Margin = new Thickness(0,0,0,18) };
-            var close = new Button { Content = "\uE8BB", Style = (Style)Window.FindResource("IconButton"), IsCancel = true, FontSize = 12, Width = 28 };
+            var close = new Button { Content = "\uE8BB", Style = (Style)Window.FindResource("IconButton"), IsCancel = true, FontSize = Font(12), Width = 28 };
             DockPanel.SetDock(close,Dock.Right); header.Children.Add(close);
-            header.Children.Add(new TextBlock { Text = "메모 수정", FontSize = 15, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+            header.Children.Add(new TextBlock { Text = "메모 수정", FontSize = Font(15), FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
             header.MouseLeftButtonDown += delegate(object sender,MouseButtonEventArgs e) { if (e.OriginalSource is TextBlock && e.ButtonState == MouseButtonState.Pressed) dialog.DragMove(); };
             panel.Children.Add(header);
             panel.Children.Add(new TextBlock { Text = "할 일", Margin = new Thickness(0,0,0,6) });
@@ -694,7 +713,7 @@ namespace StickyTodo
             var picker = new DatePicker { SelectedDate = DateTime.ParseExact(item.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture), SelectedDateFormat = DatePickerFormat.Short };
             panel.Children.Add(picker);
             dialog.RegisterName("EditDate",picker);
-            var errorLabel = new TextBlock { Foreground = Brush("Error"), FontSize = 11, Margin = new Thickness(0,6,0,0), TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+            var errorLabel = new TextBlock { Foreground = Brush("Error"), FontSize = Font(11), Margin = new Thickness(0,6,0,0), TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
             panel.Children.Add(errorLabel);
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0,12,0,0) };
             var cancel = new Button { Content = "취소", IsCancel = true, Style = (Style)Window.FindResource(typeof(Button)) };
@@ -859,6 +878,14 @@ namespace StickyTodo
             Find<Button>("ExpandButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Require(!expanded && !history && VisibleTasks().Count == 3 && Find<Grid>("Footer").Visibility == Visibility.Collapsed, "접기와 항목 보존");
             Capture(Path.Combine(dir,"compact-note.png"));
+            for (int step = 0; step < 10; step++) Find<Button>("FontDecreaseButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Require(Store.Data.Settings.FontSize == 10 && !Find<Button>("FontDecreaseButton").IsEnabled && Find<TextBox>("NewTask").FontSize == 10 && TaskText(VisibleTasks()[0]).FontSize == 10,"글자 줄이기, 전체 적용, 최소 크기 제한");
+            Capture(Path.Combine(dir,"font-small.png"));
+            for (int step = 0; step < 10; step++) Find<Button>("FontIncreaseButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Require(Store.Data.Settings.FontSize == 18 && !Find<Button>("FontIncreaseButton").IsEnabled && Find<TextBox>("NewTask").FontSize == 18,"글자 키우기와 최대 크기 제한");
+            Capture(Path.Combine(dir,"font-large.png"));
+            Window.Width = 280; Capture(Path.Combine(dir,"font-large-minimum.png")); Window.Width = 330;
+            ChangeFontSize(-5);
             Find<Button>("ExpandButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Find<Button>("PinButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             FlushUi(Window.Dispatcher);
@@ -981,12 +1008,14 @@ namespace StickyTodo
             Require(Window.WindowState==WindowState.Minimized && Window.ShowInTaskbar && !indexWindow.IsVisible,"기존 작업 표시줄 최소화 유지");
             RestoreFromIndex(); FlushUi(Window.Dispatcher);
             transparencySlider.Value = 40; PumpFor(650);
+            Find<Button>("FontIncreaseButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var reloaded = new Store(Store.PathName); Require(reloaded.Data.Tasks.Count == 5 && reloaded.Data.Settings.Color == 4 && reloaded.Data.Settings.Transparency == 40, "재실행 저장과 투명도 자동 저장");
             var reopened = new NoteApp(reloaded);
+            Require(reloaded.Data.Settings.FontSize == 14 && reopened.Find<TextBox>("NewTask").FontSize == 14,"글자 크기 저장과 재실행 복원");
             Require(Math.Abs(reopened.Window.Opacity-0.6)<0.001 && reopened.Find<Slider>("TransparencySlider").Value == 40,"투명도 설정 재실행 복원");
             Require(!reopened.expanded && Math.Abs(reopened.Window.Width-280)<2 && Math.Abs(reopened.Window.Height-240)<2 && reopened.Find<StackPanel>("ExpandedTools").Visibility == Visibility.Collapsed, "재실행은 항상 접힌 화면");
             reopened.Window.Close();
-            File.WriteAllText(Path.Combine(dir, "ui-test-result.txt"), "PASS: transparency slider drag, opacity updates and persistence, compact header date calendar and navigation, web link detection and click routing, text preservation, completed links, minimal default, expansion/collapse, native topmost/resize, custom calendar navigation/day selection, recorded-date colors and dots, completed-date marking, live add/move/delete/undo/color updates, styled task menu, delete/undo notice and timed expiry, edit text/date, history/filter/search, right-edge index tab and click restoration, duplicate-launch restoration, normal taskbar minimization, size/settings/data persistence.");
+            File.WriteAllText(Path.Combine(dir, "ui-test-result.txt"), "PASS: global font size buttons, limits and persistence, transparency slider drag, opacity updates and persistence, compact header date calendar and navigation, web link detection and click routing, text preservation, completed links, minimal default, expansion/collapse, native topmost/resize, custom calendar navigation/day selection, recorded-date colors and dots, completed-date marking, live add/move/delete/undo/color updates, styled task menu, delete/undo notice and timed expiry, edit text/date, history/filter/search, right-edge index tab and click restoration, duplicate-launch restoration, normal taskbar minimization, size/settings/data persistence.");
         }
         static void Require(bool value, string message) { if (!value) throw new Exception("확인 실패: " + message); }
     }
@@ -1067,8 +1096,8 @@ namespace StickyTodo
             Check(Store.Csv(store.Data.Tasks).Contains("\"\"따옴표\"\""),"CSV 인용");
             Todo formula = store.Add(date,"=1+1"); Check(Store.Csv(new[] {formula}).Contains("'=1+1"),"CSV 수식 방지");
             bool blankRejected = false; try {store.Add(date,"  ");} catch(ArgumentException) {blankRejected=true;} Check(blankRejected,"빈 할 일");
-            store.Data.Settings.Color = 3; store.Data.Settings.Topmost = true; store.Data.Settings.Transparency = 35; store.Save();
-            Store reload = new Store(path); Check(reload.Data.Tasks.Count == 3 && reload.Data.Settings.Color == 3 && reload.Data.Settings.Topmost && reload.Data.Settings.Transparency == 35,"영구 저장");
+            store.Data.Settings.Color = 3; store.Data.Settings.Topmost = true; store.Data.Settings.Transparency = 35; store.Data.Settings.FontSize = 11; store.Save();
+            Store reload = new Store(path); Check(reload.Data.Tasks.Count == 3 && reload.Data.Settings.Color == 3 && reload.Data.Settings.Topmost && reload.Data.Settings.Transparency == 35 && reload.Data.Settings.FontSize == 11,"영구 저장");
             reload.Data.Tasks[0].Text = "수정됨"; reload.Save(); Check(File.Exists(path+".bak"),"원자적 백업");
             File.WriteAllText(path,"{broken"); Store recovery = new Store(path); Check(recovery.Data.Tasks.Count == 3 && recovery.RecoveryNotice != null,"손상 파일 백업 복구");
             string invalid = Path.Combine(dir,Guid.NewGuid().ToString("N"),"notes.json"); Directory.CreateDirectory(Path.GetDirectoryName(invalid)); File.WriteAllText(invalid,"null");
