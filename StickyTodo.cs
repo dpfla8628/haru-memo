@@ -13,6 +13,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Markup;
 using System.Windows.Media;
@@ -23,6 +24,15 @@ using Calendar = System.Windows.Controls.Calendar;
 
 namespace StickyTodo
 {
+    public class RecordedDateConverter : IMultiValueConverter
+    {
+        public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
+        {
+            var dates = values.Length > 1 ? values[1] as HashSet<string> : null;
+            return values.Length > 0 && values[0] is DateTime && dates != null && dates.Contains(Store.Key((DateTime)values[0]));
+        }
+        public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) { throw new NotSupportedException(); }
+    }
     public class Todo
     {
         public string Id { get; set; }
@@ -378,6 +388,7 @@ namespace StickyTodo
         public void Render()
         {
             rendering = true;
+            Window.Resources["RecordedDates"] = new HashSet<string>(Store.Data.Tasks.Select(t => t.Date));
             Find<DatePicker>("DayPicker").SelectedDate = selected;
             Find<TextBlock>("DateTitle").Text = selected.ToString("M월 d일 dddd", korean);
             Find<Button>("DayTab").Background = !history ? Brush("Hover") : Brushes.Transparent;
@@ -741,6 +752,26 @@ namespace StickyTodo
             calendarPrevious.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Require(calendar.DisplayDate.Month == displayed.Month,"달력 이전 달");
             var monthView = (Grid)calendarBody.Template.FindName("PART_MonthView",calendarBody);
+            FlushUi(Window.Dispatcher);
+            var recordedDay = monthView.Children.OfType<CalendarDayButton>().First(b => b.DataContext is DateTime && ((DateTime)b.DataContext).Date == today.AddDays(-1));
+            Require(Object.Equals(recordedDay.Tag,true), "완료 기록이 있는 날짜 표시: " + recordedDay.Tag + " calendar=" + calendar.Tag);
+            Require(((Border)recordedDay.Template.FindName("Day",recordedDay)).Background == Brush("Hover"), "기록 날짜 배경색");
+            Require(((FrameworkElement)recordedDay.Template.FindName("RecordDot",recordedDay)).Visibility == Visibility.Visible, "기록 날짜 점 표시");
+            SetColor(1); Render(); FlushUi(Window.Dispatcher);
+            Require(((Border)recordedDay.Template.FindName("Day",recordedDay)).Background == Brush("Hover"), "메모 색상 변경 시 날짜 표시 색상 갱신");
+            SetColor(0); Render(); FlushUi(Window.Dispatcher);
+            var recordDay = monthView.Children.OfType<CalendarDayButton>().First(b => b.DataContext is DateTime && ((DateTime)b.DataContext).Date == today.AddDays(1));
+            Require(Object.Equals(recordDay.Tag,false), "기록 없는 날짜 표시 없음");
+            Todo calendarTask = Store.Add(today.AddDays(1), "달력 표시 검증"); Render(); FlushUi(Window.Dispatcher);
+            Require(Object.Equals(recordDay.Tag,true), "기록 추가 시 날짜 표시 갱신");
+            calendarTask.Date = Store.Key(today.AddDays(2)); Render(); FlushUi(Window.Dispatcher);
+            Require(Object.Equals(recordDay.Tag,false), "기록 날짜 이동 시 이전 표시 제거");
+            calendarTask.Date = Store.Key(today.AddDays(1)); Render(); FlushUi(Window.Dispatcher);
+            Delete(calendarTask); FlushUi(Window.Dispatcher);
+            Require(Object.Equals(recordDay.Tag,false), "마지막 기록 삭제 시 날짜 표시 제거");
+            Undo(); FlushUi(Window.Dispatcher);
+            Require(Object.Equals(recordDay.Tag,true), "삭제 취소 시 날짜 표시 복구");
+            Store.Data.Tasks.Remove(calendarTask); Render(); FlushUi(Window.Dispatcher);
             var dayButton = monthView.Children.OfType<CalendarDayButton>().First(b => b.DataContext is DateTime && ((DateTime)b.DataContext).Date == today.AddDays(1));
             dayButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Require(picker.SelectedDate.HasValue && picker.SelectedDate.Value.Date == today.AddDays(1),"달력 날짜 선택");
@@ -819,7 +850,7 @@ namespace StickyTodo
             var reopened = new NoteApp(reloaded);
             Require(!reopened.expanded && Math.Abs(reopened.Window.Width-280)<2 && Math.Abs(reopened.Window.Height-240)<2 && reopened.Find<StackPanel>("ExpandedTools").Visibility == Visibility.Collapsed, "재실행은 항상 접힌 화면");
             reopened.Window.Close();
-            File.WriteAllText(Path.Combine(dir, "ui-test-result.txt"), "PASS: minimal default, expansion/collapse, native topmost/resize, custom calendar navigation/day selection, styled task menu, delete/undo notice and timed expiry, edit text/date, history/filter/search, right-edge index tab and click restoration, duplicate-launch restoration, normal taskbar minimization, size/settings/data persistence.");
+            File.WriteAllText(Path.Combine(dir, "ui-test-result.txt"), "PASS: minimal default, expansion/collapse, native topmost/resize, custom calendar navigation/day selection, recorded-date colors and dots, completed-date marking, live add/move/delete/undo/color updates, styled task menu, delete/undo notice and timed expiry, edit text/date, history/filter/search, right-edge index tab and click restoration, duplicate-launch restoration, normal taskbar minimization, size/settings/data persistence.");
         }
         static void Require(bool value, string message) { if (!value) throw new Exception("확인 실패: " + message); }
     }
