@@ -173,12 +173,14 @@ namespace StickyTodo
         readonly DispatcherTimer geometryTimer = new DispatcherTimer();
         readonly DispatcherTimer dayTimer = new DispatcherTimer();
         readonly DispatcherTimer undoTimer = new DispatcherTimer();
+        readonly DispatcherTimer healthTimer = new DispatcherTimer();
         readonly List<CheckBox> renderedChecks = new List<CheckBox>();
         readonly ResourceDictionary resources;
         Window indexWindow;
         Button indexButton;
         bool docked, shuttingDown;
         bool ready, rendering, history, expanded, saveFailed;
+        string closeReason = "window-close";
         DateTime selected = DateTime.Today, lastToday = DateTime.Today;
         public NoteApp(Store store)
         {
@@ -209,10 +211,16 @@ namespace StickyTodo
             Window.LocationChanged += delegate { if (ready) { geometryTimer.Stop(); geometryTimer.Start(); } };
             Window.Closing += delegate(object sender, System.ComponentModel.CancelEventArgs e)
             {
+                Program.Trace(Store.PathName,"window-closing",closeReason + " visible=" + Window.IsVisible + " state=" + Window.WindowState);
                 SaveGeometry();
                 if (!Persist()) e.Cancel = MessageBox.Show(Window, "저장하지 못한 변경 사항이 있습니다. 그래도 닫을까요?", "저장 오류", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes;
+                if (e.Cancel) { Program.Trace(Store.PathName,"close-canceled"); closeReason = "window-close"; }
             };
-            Window.Closed += delegate { shuttingDown = true; geometryTimer.Stop(); dayTimer.Stop(); undoTimer.Stop(); if(indexWindow != null) indexWindow.Close(); };
+            Window.Closed += delegate { Program.Trace(Store.PathName,"window-closed",closeReason); shuttingDown = true; geometryTimer.Stop(); dayTimer.Stop(); undoTimer.Stop(); healthTimer.Stop(); if(indexWindow != null) indexWindow.Close(); };
+            Window.IsVisibleChanged += delegate { Program.Trace(Store.PathName,"window-visible","visible=" + Window.IsVisible + " docked=" + docked); };
+            Window.StateChanged += delegate { Program.Trace(Store.PathName,"window-state",Window.WindowState.ToString()); };
+            healthTimer.Interval = TimeSpan.FromMinutes(1);
+            healthTimer.Tick += delegate { LogHealth(); };
             undoTimer.Interval = TimeSpan.FromSeconds(7);
             undoTimer.Tick += delegate { HideUndoNotice(); };
             Window.SourceInitialized += delegate
@@ -220,6 +228,9 @@ namespace StickyTodo
                 var source = System.Windows.Interop.HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(Window).Handle);
                 source.AddHook(delegate(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
                 {
+                    if (message == 0x0112 && (wParam.ToInt64() & 0xfff0) == 0xf060) { closeReason = "system-close"; Program.Trace(Store.PathName,"system-close-request"); }
+                    if (message == 0x0010) Program.Trace(Store.PathName,"wm-close",closeReason);
+                    if (message == 0x0011 || message == 0x0016) Program.Trace(Store.PathName,"windows-session-message","message=" + message + " ending=" + wParam.ToInt64());
                     if (message == 0x0084 && Window.WindowState == WindowState.Normal)
                     {
                         long coordinates = lParam.ToInt64();
@@ -242,7 +253,16 @@ namespace StickyTodo
                     Render();
                 }
             };
-            Window.Loaded += delegate { ready = true; dayTimer.Start(); Render(); ApplyTopmost(); if (Store.RecoveryNotice != null) MessageBox.Show(Window, Store.RecoveryNotice, "백업 복구", MessageBoxButton.OK, MessageBoxImage.Information); };
+            Window.Loaded += delegate { ready = true; dayTimer.Start(); healthTimer.Start(); LogHealth(); Render(); ApplyTopmost(); if (Store.RecoveryNotice != null) MessageBox.Show(Window, Store.RecoveryNotice, "백업 복구", MessageBoxButton.OK, MessageBoxImage.Information); };
+        }
+        void LogHealth()
+        {
+            try
+            {
+                using (var process = Process.GetCurrentProcess())
+                    Program.Trace(Store.PathName,"health","private_mb=" + (process.PrivateMemorySize64/1048576) + " managed_mb=" + (GC.GetTotalMemory(false)/1048576) + " handles=" + process.HandleCount + " visible=" + Window.IsVisible + " state=" + Window.WindowState + " docked=" + docked);
+            }
+            catch { }
         }
         public T Find<T>(string name) where T : FrameworkElement { return (T)Window.FindName(name); }
         Brush Brush(string key) { return (Brush)Window.FindResource(key); }
@@ -327,7 +347,7 @@ namespace StickyTodo
                 dateDragStart = null; dateButton.ReleaseMouseCapture(); e.Handled = true;
                 try { Window.DragMove(); } catch (InvalidOperationException) { }
             };
-            Find<Button>("CloseButton").Click += delegate { Window.Close(); };
+            Find<Button>("CloseButton").Click += delegate { closeReason = "close-button"; Window.Close(); };
             Find<Button>("ExpandButton").Click += delegate { SetExpanded(!expanded); };
             Find<Button>("DockButton").Click += delegate { DockToIndex(); };
             Find<Button>("PinButton").Click += delegate { Window.Topmost = !Window.Topmost; ApplyTopmost(); Store.Data.Settings.Topmost = Window.Topmost; Persist(); RenderPin(); Window.Dispatcher.BeginInvoke(DispatcherPriority.Background,new Action(ApplyTopmost)); };
@@ -846,6 +866,10 @@ namespace StickyTodo
             Require(Find<StackPanel>("ExpandedTools").Visibility == Visibility.Collapsed && Find<StackPanel>("DayHeader").Visibility == Visibility.Collapsed && Find<Grid>("Footer").Visibility == Visibility.Collapsed, "기본 확장 UI 숨김");
             Capture(Path.Combine(dir,"compact-empty.png"));
             DateTime today = DateTime.Today;
+            string diagnosticLog = Path.Combine(Path.GetDirectoryName(Store.PathName),"diagnostics.log");
+            int healthBefore = File.ReadLines(diagnosticLog).Count(line => line.Contains(" health "));
+            healthTimer.Interval = TimeSpan.FromMilliseconds(30); PumpFor(90); healthTimer.Interval = TimeSpan.FromMinutes(1);
+            Require(File.ReadLines(diagnosticLog).Count(line => line.Contains(" health ")) > healthBefore,"유휴 상태 진단 기록");
             var transparencySlider = Find<Slider>("TransparencySlider");
             Require(transparencySlider.IsVisible && Window.Opacity == 1,"접힌 화면의 투명도 슬라이더와 기본 불투명 상태");
             transparencySlider.Value = 80;
@@ -1075,13 +1099,15 @@ namespace StickyTodo
             Require(reloaded.Data.Settings.FontSize == 14 && reopened.Find<TextBox>("NewTask").FontSize == 14,"글자 크기 저장과 재실행 복원");
             Require(reopened.Window.Opacity == 1 && Math.Abs(reopened.Brush("MemoPaper").Opacity-0.6)<0.001 && reopened.Find<Slider>("TransparencySlider").Value == 40,"배경 투명도 설정 재실행 복원");
             Require(!reopened.expanded && Math.Abs(reopened.Window.Width-280)<2 && Math.Abs(reopened.Window.Height-240)<2 && reopened.Find<StackPanel>("ExpandedTools").Visibility == Visibility.Collapsed, "재실행은 항상 접힌 화면");
-            reopened.Window.Close();
+            reopened.Find<Button>("CloseButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Require(File.ReadAllText(diagnosticLog).Contains("window-closing close-button"),"종료 버튼 원인 기록");
             File.WriteAllText(Path.Combine(dir, "ui-test-result.txt"), "PASS: global font size buttons, limits and persistence, transparency slider drag, opacity updates and persistence, compact header date calendar and navigation, web link detection and click routing, text preservation, completed links, minimal default, expansion/collapse, native topmost/resize, custom calendar navigation/day selection, recorded-date colors and dots, completed-date marking, live add/move/delete/undo/color updates, styled task menu, delete/undo notice and timed expiry, edit text/date, history/filter/search, right-edge index tab and click restoration, duplicate-launch restoration, normal taskbar minimization, size/settings/data persistence.");
         }
         static void Require(bool value, string message) { if (!value) throw new Exception("확인 실패: " + message); }
     }
     public static class Program
     {
+        static readonly object traceLock = new object();
         public const int RestoreMessage = 0x8068;
         [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam);
         [DllImport("user32.dll")] static extern IntPtr FindWindow(string className, string title);
@@ -1093,6 +1119,7 @@ namespace StickyTodo
             string baseDir = AppDomain.CurrentDomain.BaseDirectory;
             bool self = args.Length > 0 && args[0] == "--self-test";
             bool ui = args.Length > 0 && args[0] == "--ui-test";
+            string diagnosticDataPath = Path.Combine(baseDir,"data","notes.json");
             try
             {
                 if (self) { SelfTest(args.Length > 1 ? args[1] : Path.Combine(baseDir,"test")); return 0; }
@@ -1106,7 +1133,18 @@ namespace StickyTodo
                         return 0;
                     }
                     string dataPath = ui ? Path.Combine(uiDir,"data",Guid.NewGuid().ToString("N") + ".json") : Path.Combine(baseDir, "data", "notes.json");
+                    diagnosticDataPath = dataPath;
+                    Trace(dataPath,"app-start","build_utc=" + File.GetLastWriteTimeUtc(Assembly.GetExecutingAssembly().Location).ToString("o") + " mode=" + (ui ? "ui-test" : "normal"));
+                    AppDomain.CurrentDomain.UnhandledException += delegate(object sender, UnhandledExceptionEventArgs e) { Trace(dataPath,"unhandled-exception","terminating=" + e.IsTerminating); LogError(dataPath,e.ExceptionObject); };
+                    AppDomain.CurrentDomain.ProcessExit += delegate { Trace(dataPath,"process-exit"); };
                     var application = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
+                    application.Exit += delegate(object sender,ExitEventArgs e) { Trace(dataPath,"app-exit","code=" + e.ApplicationExitCode); };
+                    application.SessionEnding += delegate(object sender,SessionEndingCancelEventArgs e) { Trace(dataPath,"windows-session-ending",e.ReasonSessionEnding.ToString()); };
+                    application.DispatcherUnhandledException += delegate(object sender, DispatcherUnhandledExceptionEventArgs e)
+                    {
+                        Trace(dataPath,"dispatcher-exception"); LogError(dataPath,e.Exception);
+                        MessageBox.Show("작업을 처리하지 못했습니다.\n" + e.Exception.Message, "하루 메모", MessageBoxButton.OK, MessageBoxImage.Warning); e.Handled = true;
+                    };
                     var note = new NoteApp(new Store(dataPath));
                     if (ui)
                     {
@@ -1120,22 +1158,32 @@ namespace StickyTodo
                             }));
                         };
                     }
-                    AppDomain.CurrentDomain.UnhandledException += delegate(object sender, UnhandledExceptionEventArgs e) { LogError(dataPath, e.ExceptionObject); };
-                    application.DispatcherUnhandledException += delegate(object sender, DispatcherUnhandledExceptionEventArgs e)
-                    {
-                        LogError(dataPath, e.Exception);
-                        MessageBox.Show(note.Window, "작업을 처리하지 못했습니다.\n" + e.Exception.Message, "하루 메모", MessageBoxButton.OK, MessageBoxImage.Warning); e.Handled = true;
-                    };
                     return application.Run(note.Window);
                 }
             }
             catch (Exception error)
             {
+                Trace(diagnosticDataPath,"startup-or-run-exception"); LogError(diagnosticDataPath,error);
                 if (self || ui)
                 { string dir = args.Length > 1 ? args[1] : baseDir; Directory.CreateDirectory(dir); File.WriteAllText(Path.Combine(dir,"error.txt"),error.ToString()); }
                 else MessageBox.Show("하루 메모를 열지 못했습니다.\n" + error.Message, "하루 메모", MessageBoxButton.OK, MessageBoxImage.Error);
                 return 1;
             }
+        }
+        public static void Trace(string dataPath, string name, string detail = "")
+        {
+            try
+            {
+                lock (traceLock)
+                {
+                    string folder = Path.GetDirectoryName(dataPath), path = Path.Combine(folder,"diagnostics.log");
+                    Directory.CreateDirectory(folder);
+                    if (File.Exists(path) && new FileInfo(path).Length > 1048576) { File.Copy(path,path + ".previous",true); File.WriteAllText(path,""); }
+                    using (var process = Process.GetCurrentProcess())
+                        File.AppendAllText(path,DateTimeOffset.Now.ToString("o") + " pid=" + process.Id + " " + name + (detail.Length == 0 ? "" : " " + detail) + Environment.NewLine,Encoding.UTF8);
+                }
+            }
+            catch { }
         }
         static void LogError(string dataPath, object error)
         {
